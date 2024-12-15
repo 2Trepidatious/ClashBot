@@ -5,8 +5,6 @@ import requests
 from config import *
 from attack_roasts import roasts, brutal_roasts
 
-WAR_STARS_FILE = "war_stars.json"
-CWL_STARS_FILE = "cwl_stars.json"
 TRACKED_ATTACKS_FILE = "tracked_attacks.json"
 
 def load_stars(file_path):

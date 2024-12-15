@@ -3,7 +3,7 @@ import requests
 import os
 import csv
 from config import *
-from war_updates import check_war_updates
+from war_updates import check_war_updates, load_stars
 
 
 def get_clan_info(clan_tag):
@@ -12,7 +12,7 @@ def get_clan_info(clan_tag):
     response = requests.get(url, headers=HEADERS)
     if response.status_code == 200:
         data = response.json()
-        print("Clan Info:", data)
+        #print("Clan Info:", data)
         return data
     else:
         print(f"Error fetching clan info: {response.status_code}, {response.text}")
@@ -36,7 +36,6 @@ def get_clan_member_stats(clan_data):
         member_stats.append(stats)
 
     return member_stats
-
 
 def save_to_csv(data, filename):
     """Save data to a CSV file."""
@@ -114,10 +113,12 @@ async def clanstats(interaction: discord.Interaction):
 
 @bot.tree.command(name="memberstats", description="Retrieve stats for a specific member.")
 async def memberstats(interaction: discord.Interaction, member_name: str):
+    """Retrieve stats for a specific clan member."""
     if interaction.channel_id != GENERAL_BOT_CHANNEL_ID:
         await interaction.response.send_message("This command is not allowed in this channel.", ephemeral=True)
         return
 
+    # Fetch clan info
     encoded_clan_tag = CLAN_TAG.replace("#", "%23")
     clan_data = get_clan_info(encoded_clan_tag)
 
@@ -125,6 +126,7 @@ async def memberstats(interaction: discord.Interaction, member_name: str):
         await interaction.response.send_message("Failed to fetch member stats.", ephemeral=True)
         return
 
+    # Search for the specified member
     members = get_clan_member_stats(clan_data)
     member = next((m for m in members if m["Name"].lower() == member_name.lower()), None)
 
@@ -132,15 +134,26 @@ async def memberstats(interaction: discord.Interaction, member_name: str):
         await interaction.response.send_message(f"Member '{member_name}' not found.", ephemeral=True)
         return
 
+    # Load stars data
+    war_stars_data = load_stars(WAR_STARS_FILE)
+    cwl_stars_data = load_stars(CWL_STARS_FILE)
+
+    # Get war stars and CWL stars for the member
+    war_stars = war_stars_data.get(member["Name"], 0)
+    cwl_stars = cwl_stars_data.get(member["Name"], 0)
+
+    # Construct the response message
     member_summary = (
         f"**Name:** {member['Name']}\n"
         f"**Role:** {member['Role']}\n"
         f"**Donations:** {member['Donations']}\n"
         f"**Donations Received:** {member['Donations Received']}\n"
         f"**Trophies:** {member['Trophies']}\n"
-        f"**War Stars:** {member.get("War Stars", 0)}"
+        f"**War Stars:** {war_stars}\n"
+        f"**CWL Stars:** {cwl_stars}"
     )
     await interaction.response.send_message(member_summary)
+
 
 @bot.tree.command(name="topdonors", description="Retrieve top donors in the clan.")
 async def topdonors(interaction: discord.Interaction, top_n: int = 5):
