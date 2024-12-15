@@ -44,3 +44,4 @@ tracked_attacks = set()
 roasting_enabled = True
 initialized = False
 last_war_state = None
+war_update_setting = "one_zero"
