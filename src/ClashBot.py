@@ -3,7 +3,8 @@ import requests
 import os
 import csv
 from config import *
-from war_updates import check_war_updates, load_stars
+from war_updates import check_war_updates
+from file_io import *
 
 
 def get_clan_info(clan_tag):
@@ -113,46 +114,91 @@ async def clanstats(interaction: discord.Interaction):
 
 @bot.tree.command(name="memberstats", description="Retrieve stats for a specific member.")
 async def memberstats(interaction: discord.Interaction, member_name: str):
-    """Retrieve stats for a specific clan member."""
+    """Retrieve detailed stats for a specific member, including recent attacks."""
     if interaction.channel_id != GENERAL_BOT_CHANNEL_ID:
         await interaction.response.send_message("This command is not allowed in this channel.", ephemeral=True)
         return
 
-    # Fetch clan info
+    # Load data files
+    war_stars_data = load_file_data(WAR_STARS_FILE)
+    cwl_stars_data = load_file_data(CWL_STARS_FILE)
+    recent_war_data = load_file_data(RECENT_WAR_FILE)
+    recent_cwl_data = load_file_data(RECENT_CWL_FILE)
+
+    # Get member data from the clan's API
     encoded_clan_tag = CLAN_TAG.replace("#", "%23")
     clan_data = get_clan_info(encoded_clan_tag)
-
     if not clan_data:
         await interaction.response.send_message("Failed to fetch member stats.", ephemeral=True)
         return
 
-    # Search for the specified member
-    members = get_clan_member_stats(clan_data)
-    member = next((m for m in members if m["Name"].lower() == member_name.lower()), None)
-
+    # Locate the member in the clan data
+    member = next((m for m in clan_data.get("memberList", []) if m["name"].lower() == member_name.lower()), None)
     if not member:
         await interaction.response.send_message(f"Member '{member_name}' not found.", ephemeral=True)
         return
 
-    # Load stars data
-    war_stars_data = load_stars(WAR_STARS_FILE)
-    cwl_stars_data = load_stars(CWL_STARS_FILE)
+    # Collect general stats
+    role = member.get("role", "Unknown").capitalize()
+    town_hall_level = member.get("townHallLevel", "Unknown")
+    donations = member.get("donations", 0)
+    donations_received = member.get("donationsReceived", 0)
+    trophies = member.get("trophies", 0)
+    war_stars = war_stars_data.get(member_name, 0)
+    cwl_stars = cwl_stars_data.get(member_name, 0)
 
-    # Get war stars and CWL stars for the member
-    war_stars = war_stars_data.get(member["Name"], 0)
-    cwl_stars = cwl_stars_data.get(member["Name"], 0)
+    # Collect recent war attacks
+    recent_war_attacks = [
+        attack for attack in recent_war_data.values()
+        if attack["attacker"].startswith(member_name)
+    ]
 
-    # Construct the response message
-    member_summary = (
-        f"**Name:** {member['Name']}\n"
-        f"**Role:** {member['Role']}\n"
-        f"**Donations:** {member['Donations']}\n"
-        f"**Donations Received:** {member['Donations Received']}\n"
-        f"**Trophies:** {member['Trophies']}\n"
-        f"**War Stars:** {war_stars}\n"
-        f"**CWL Stars:** {cwl_stars}"
+    # Collect recent CWL attacks with round information
+    recent_cwl_attacks = {}
+    for round_name, round_attacks in recent_cwl_data.items():
+        member_attacks = [
+            attack for attack in round_attacks
+            if attack["attacker"].startswith(member_name)
+        ]
+        if member_attacks:
+            recent_cwl_attacks[round_name] = member_attacks
+
+    # Helper function to format attack data
+    def format_attacks(attacks):
+        if not attacks:
+            return "No recent attacks."
+        return "\n".join(
+            f"**Attacked:** {attack['defender']} - **Stars:** {attack['stars']} - "
+            f"**Destruction:** {attack['destruction']}%"
+            for attack in attacks
+        )
+
+    # Format recent attack summaries
+    recent_war_summary = format_attacks(recent_war_attacks)
+    recent_cwl_summary = (
+        "\n".join(
+            f"**{round_name}:**\n{format_attacks(round_attacks)}"
+            for round_name, round_attacks in recent_cwl_attacks.items()
+        )
+        if recent_cwl_attacks
+        else "No recent CWL attacks."
     )
-    await interaction.response.send_message(member_summary)
+
+    # Build and send the response
+    response = (
+        f"**Stats for {member_name}:**\n"
+        f"**Role:** {role}\n"
+        f"**Town Hall Level:** {town_hall_level}\n"
+        f"**Donations:** {donations}\n"
+        f"**Donations Received:** {donations_received}\n"
+        f"**Trophies:** {trophies}\n"
+        f"**War Stars:** {war_stars}\n"
+        f"**CWL Stars:** {cwl_stars}\n\n"
+        f"**Recent War Attacks:**\n{recent_war_summary}\n\n"
+        f"**Recent CWL Attacks:**\n{recent_cwl_summary}"
+    )
+
+    await interaction.response.send_message(response)
 
 
 @bot.tree.command(name="topdonors", description="Retrieve top donors in the clan.")
@@ -181,25 +227,80 @@ async def topdonors(interaction: discord.Interaction, top_n: int = 5):
     await interaction.response.send_message(f"**Top {top_n} Donors:**\n{donor_list}")
 
 
-@bot.tree.command(name="exportstats", description="Export member stats to a CSV file and provide a download link.")
+@bot.tree.command(name="exportstats", description="Export clan stats to a CSV file.")
 async def exportstats(interaction: discord.Interaction):
-    if interaction.channel_id != GENERAL_BOT_CHANNEL_ID:
-        await interaction.response.send_message("This command is not allowed in this channel.", ephemeral=True)
-        return
+    """Export stats of all clan members to a CSV file."""
+    # Load data files
+    war_stars_data = load_file_data(WAR_STARS_FILE)
+    cwl_stars_data = load_file_data(CWL_STARS_FILE)
+    recent_war_data = load_file_data(RECENT_WAR_FILE)
+    recent_cwl_data = load_file_data(RECENT_CWL_FILE)
 
+    # Get clan data
     encoded_clan_tag = CLAN_TAG.replace("#", "%23")
     clan_data = get_clan_info(encoded_clan_tag)
-
     if not clan_data:
-        await interaction.response.send_message("Failed to fetch member stats for export.", ephemeral=True)
+        await interaction.response.send_message("Failed to fetch clan stats.", ephemeral=True)
         return
 
-    members = get_clan_member_stats(clan_data)
-    filename = "clan_member_stats.csv"
-    save_to_csv(members, filename)
+    # Prepare CSV data
+    csv_data = []
+    for member in clan_data.get("memberList", []):
+        member_name = member["name"]
+        role = member.get("role", "Unknown").capitalize()
+        town_hall_level = member.get("townHallLevel", 0)
+        donations = member.get("donations", 0)
+        donations_received = member.get("donationsReceived", 0)
+        trophies = member.get("trophies", 0)
 
-    await interaction.response.send_message(file=discord.File(filename))
+        # Retrieve cumulative stars
+        war_stars = war_stars_data.get(member_name, 0)
+        cwl_stars = cwl_stars_data.get(member_name, 0)
 
+        # Retrieve stars from recent war
+        recent_war_stars = sum(
+            attack["stars"]
+            for attack in recent_war_data.values()
+            if attack["attacker"].startswith(member_name)
+        )
+
+        # Retrieve stars from recent CWL
+        recent_cwl_stars = sum(
+            attack["stars"]
+            for round_attacks in recent_cwl_data.values()
+            for attack in round_attacks
+            if attack["attacker"].startswith(member_name)
+        )
+
+        # Add member data to CSV row
+        csv_data.append({
+            "Name": member_name,
+            "Role": role,
+            "Town Hall Level": town_hall_level,
+            "Donations": donations,
+            "Donations Received": donations_received,
+            "Trophies": trophies,
+            "Cumulative War Stars": war_stars,
+            "Cumulative CWL Stars": cwl_stars,
+            "Recent War Stars": recent_war_stars,
+            "Recent CWL Stars": recent_cwl_stars,
+        })
+
+    # Write to a CSV file with utf-8 encoding
+    file_path = "clan_stats.csv"
+    with open(file_path, "w", newline="", encoding="utf-8") as csv_file:
+        fieldnames = [
+            "Name", "Role", "Town Hall Level", "Donations", "Donations Received",
+            "Trophies", "Cumulative War Stars", "Cumulative CWL Stars",
+            "Recent War Stars", "Recent CWL Stars"
+        ]
+        writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(csv_data)
+
+    # Notify user and upload file
+    await interaction.response.send_message("Stats exported successfully. Here is the CSV file:", ephemeral=True)
+    await interaction.followup.send(file=discord.File(file_path))
 
 if __name__ == "__main__":
     bot.run(os.getenv("DISCORD_BOT_TOKEN"))

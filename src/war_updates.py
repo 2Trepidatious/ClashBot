@@ -1,53 +1,39 @@
-import json
-import os
 from discord.ext import tasks
 import requests
 from config import *
 from attack_roasts import roasts, brutal_roasts
+from file_io import *
 
-TRACKED_ATTACKS_FILE = "tracked_attacks.json"
+def update_recent_data(attacks, recent_data):
+    """Update the recent war or CWL data with new attacks."""
+    for attack in attacks:
+        key = f"{attack['attacker']} -> {attack['defender']}"
+        if key not in recent_data:
+            recent_data[key] = {
+                "attacker": attack["attacker"],
+                "defender": attack["defender"],
+                "stars": attack["stars"],
+                "destruction": attack["destruction"],
+            }
+    return recent_data
 
-def load_stars(file_path):
-    """Load stars data from a JSON file."""
-    if os.path.exists(file_path):
-        with open(file_path, "r") as file:
-            return json.load(file)
-    return {}
-
-def save_stars(data, file_path):
-    """Save stars data to a JSON file."""
-    with open(file_path, "w") as file:
-        json.dump(data, file, indent=4)
-
-def load_tracked_attacks():
-    """Load tracked attacks data from a JSON file."""
-    if os.path.exists(TRACKED_ATTACKS_FILE):
-        with open(TRACKED_ATTACKS_FILE, "r") as file:
-            return json.load(file)
-    return []
-
-def save_tracked_attacks(data):
-    """Save tracked attacks data to a JSON file."""
-    with open(TRACKED_ATTACKS_FILE, "w") as file:
-        json.dump(data, file, indent=4)
-
-def reset_tracked_attacks():
-    """Reset the tracked attacks file by clearing its content."""
-    with open(TRACKED_ATTACKS_FILE, "w") as file:
-        json.dump([], file)
-
-def update_stars(attacks, stars_data, tracked_attacks):
+def update_stars(attacks, stars_data, recent_data):
     """Update the stars data with the results from the current war."""
     for attack in attacks:
-        attack_key = (attack["attacker"], attack["defender"])
-        if attack_key not in tracked_attacks:
+        key = f"{attack['attacker']} -> {attack['defender']}"
+        if key not in recent_data:  # Ensure stars are only added for new attacks
             attacker = attack["attacker"]
             stars = attack["stars"]
             if attacker not in stars_data:
                 stars_data[attacker] = 0
             stars_data[attacker] += stars
-            tracked_attacks.append(attack_key)
-    return stars_data, tracked_attacks
+            recent_data[key] = {  # Add the attack to recent data
+                "attacker": attack["attacker"],
+                "defender": attack["defender"],
+                "stars": attack["stars"],
+                "destruction": attack["destruction"],
+            }
+    return stars_data, recent_data
 
 def get_current_war(clan_tag):
     """Fetch current war information, including CWL if applicable."""
@@ -85,9 +71,9 @@ def get_war_attacks(war_data):
                         break
                 attacks.append({
                     "attacker": f"{member['name']} (#{member_position})",
+                    "defender": f"{attack.get('defenderTag')} (#{defender_position})",
                     "stars": attack["stars"],
-                    "destruction": attack["destructionPercentage"],
-                    "defender": f"{attack.get('defenderTag')} (#{defender_position})"
+                    "destruction": attack["destructionPercentage"]
                 })
     return attacks
     
@@ -101,20 +87,26 @@ async def check_war_updates():
     if not war_data:
         return
 
-    # Load existing war stars, CWL stars, and tracked attacks data
-    war_stars_data = load_stars(WAR_STARS_FILE)
-    cwl_stars_data = load_stars(CWL_STARS_FILE)
-    tracked_attacks = load_tracked_attacks()
+    # Load existing war stars, CWL stars, and recent data
+    war_stars_data = load_file_data(WAR_STARS_FILE)
+    cwl_stars_data = load_file_data(CWL_STARS_FILE)
+    recent_war_data = load_file_data(RECENT_WAR_FILE)
+    recent_cwl_data = load_file_data(RECENT_CWL_FILE)
 
     # Initialize last_war_state if it hasn't been set
     current_state = war_data.get("state")
     if last_war_state is None:
         last_war_state = current_state
 
-    # Notify when a new war starts and reset tracked attacks
+    # Notify when a new war starts and reset recent data
     if last_war_state != current_state and current_state == "inWar":
         last_war_state = current_state
-        reset_tracked_attacks()
+        if "rounds" in war_data:  # CWL
+            reset_file_data(RECENT_CWL_FILE)
+            recent_cwl_data = {}
+        else:  # Regular war
+            reset_file_data(RECENT_WAR_FILE)
+            recent_war_data = {}
         channel = bot.get_channel(WAR_UPDATES_CHANNEL_ID)
         if channel:
             await channel.send("A new war has started! Prepare for battle.")
@@ -125,23 +117,29 @@ async def check_war_updates():
     # Extract attacks
     attacks = []
     if "rounds" in war_data:  # Handle CWL data
-        for round in war_data["rounds"]:
+        for round_index, round in enumerate(war_data["rounds"], start=1):
             for war in round.get("wars", []):
-                attacks.extend(get_war_attacks(war))
-        cwl_stars_data, tracked_attacks = update_stars(attacks, cwl_stars_data, tracked_attacks)
-        save_stars(cwl_stars_data, CWL_STARS_FILE)
+                round_attacks = get_war_attacks(war)
+                attacks.extend(round_attacks)
+                round_key = f"Round {round_index}"
+                if round_key not in recent_cwl_data:
+                    recent_cwl_data[round_key] = []
+                recent_cwl_data[round_key] = update_recent_data(round_attacks, recent_cwl_data.get(round_key, {}))
+        cwl_stars_data, recent_cwl_data = update_stars(attacks, cwl_stars_data, recent_cwl_data)
+        save_file_data(cwl_stars_data, CWL_STARS_FILE)
+        save_file_data(recent_cwl_data, RECENT_CWL_FILE)
     else:  # Handle regular war data
         attacks = get_war_attacks(war_data)
-        war_stars_data, tracked_attacks = update_stars(attacks, war_stars_data, tracked_attacks)
-        save_stars(war_stars_data, WAR_STARS_FILE)
-
-    save_tracked_attacks(tracked_attacks)
+        war_stars_data, recent_war_data = update_stars(attacks, war_stars_data, recent_war_data)
+        save_file_data(war_stars_data, WAR_STARS_FILE)
+        save_file_data(recent_war_data, RECENT_WAR_FILE)
 
     channel = bot.get_channel(WAR_UPDATES_CHANNEL_ID)
     if channel and war_update_setting != "none":
         for attack in attacks:
-            attack_key = (attack["attacker"], attack["defender"])
-            if attack_key not in tracked_attacks:
+            key = f"{attack['attacker']} -> {attack['defender']}"
+            recent_data = recent_cwl_data if "rounds" in war_data else recent_war_data
+            if key not in recent_data:  # Ensure notification is for new attacks
                 if war_update_setting == "all" or (war_update_setting == "one_zero" and attack["stars"] <= 1):
                     await channel.send(
                         f"**New Attack!**\n"
@@ -157,10 +155,12 @@ async def check_war_updates():
                         await roast_member(channel, attack["attacker"], brutal=False)
 
 
+
+
 @bot.tree.command(name="topwarstars", description="Show top members by war stars.")
 async def topwarstars(interaction: discord.Interaction, top_n: int = 5):
     """Retrieve top members by cumulative war stars."""
-    war_stars_data = load_stars(WAR_STARS_FILE)
+    war_stars_data = load_file_data(WAR_STARS_FILE)
     if not war_stars_data:
         await interaction.response.send_message("No war stars data available.", ephemeral=True)
         return
@@ -172,7 +172,7 @@ async def topwarstars(interaction: discord.Interaction, top_n: int = 5):
 @bot.tree.command(name="topcwlstars", description="Show top members by CWL stars.")
 async def topcwlstars(interaction: discord.Interaction, top_n: int = 5):
     """Retrieve top members by cumulative CWL stars."""
-    cwl_stars_data = load_stars(CWL_STARS_FILE)
+    cwl_stars_data = load_file_data(CWL_STARS_FILE)
     if not cwl_stars_data:
         await interaction.response.send_message("No CWL stars data available.", ephemeral=True)
         return
