@@ -13,6 +13,10 @@ WAR_UPDATES_CHANNEL_ID = int(os.getenv("WAR_UPDATES_CHANNEL_ID", 0))
 GENERAL_BOT_CHANNEL_ID = int(os.getenv("GENERAL_BOT_CHANNEL_ID", 0))
 DISCORD_SERVER_ID = int(os.getenv("DISCORD_SERVER_ID", 0))
 BASE_URL = "https://api.clashofclans.com/v1"
+WAR_STARS_FILE = "war_stars.json"
+CWL_STARS_FILE = "cwl_stars.json"
+RECENT_WAR_FILE = "recent_war.json"
+RECENT_CWL_FILE = "recent_cwl.json"
 
 if not DISCORD_SERVER_ID:
     raise ValueError("Discord Server ID is not set in the .env file")
