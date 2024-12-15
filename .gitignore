@@ -163,3 +163,4 @@ cython_debug/
 
 # Data Output
 *.csv
+*.json
