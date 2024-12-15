@@ -38,15 +38,6 @@ def get_clan_member_stats(clan_data):
 
     return member_stats
 
-def save_to_csv(data, filename):
-    """Save data to a CSV file."""
-    keys = data[0].keys() if data else []
-    with open(filename, "w", newline="", encoding="utf-8") as csvfile:
-        writer = csv.DictWriter(csvfile, fieldnames=keys)
-        writer.writeheader()
-        writer.writerows(data)
-    print(f"Data saved to {filename}")
-
 @bot.event
 async def on_ready():
     """Start tasks when the bot is ready."""
@@ -92,24 +83,38 @@ async def set_war_updates(interaction: discord.Interaction, setting: str):
 
 @bot.tree.command(name="clanstats", description="Retrieve clan statistics.")
 async def clanstats(interaction: discord.Interaction):
-    if interaction.channel_id != GENERAL_BOT_CHANNEL_ID:
-        await interaction.response.send_message("This command is not allowed in this channel.", ephemeral=True)
-        return
-
-    encoded_clan_tag = CLAN_TAG.replace("#", "%23")  # URL encode the clan tag
+    """Retrieve and display clan statistics."""
+    encoded_clan_tag = CLAN_TAG.replace("#", "%23")
     clan_data = get_clan_info(encoded_clan_tag)
 
     if not clan_data:
         await interaction.response.send_message("Failed to fetch clan stats.", ephemeral=True)
         return
 
-    clan_summary = (
-        f"**Clan Name:** {clan_data.get('name')}\n"
-        f"**Clan Level:** {clan_data.get('clanLevel')}\n"
-        f"**Members:** {clan_data.get('members')}/50\n"
-        f"**Clan Points:** {clan_data.get('clanPoints')}"
+    # Extract relevant clan data
+    clan_name = clan_data.get("name", "Unknown")
+    clan_level = clan_data.get("clanLevel", 0)
+    members = len(clan_data.get("memberList", []))
+    war_wins = clan_data.get("warWins", 0)
+    war_ties = clan_data.get("warTies", 0)
+    war_losses = clan_data.get("warLosses", 0)
+    war_league = clan_data.get("warLeague", {}).get("name", "Unknown")
+    capital_league = clan_data.get("capitalLeague", {}).get("name", "Unknown")
+
+    # Format and send response
+    response = (
+        f"**Clan Name:** {clan_name}\n"
+        f"**Clan Level:** {clan_level}\n"
+        f"**Members:** {members}\n"
+        f"**War League:** {war_league}\n"
+        f"**Capital League:** {capital_league}\n"
+        f"**War Stats:**\n"
+        f"  Wins: {war_wins}\n"
+        f"  Ties: {war_ties}\n"
+        f"  Losses: {war_losses}\n"
     )
-    await interaction.response.send_message(clan_summary)
+
+    await interaction.response.send_message(response)
 
 
 @bot.tree.command(name="memberstats", description="Retrieve stats for a specific member.")
