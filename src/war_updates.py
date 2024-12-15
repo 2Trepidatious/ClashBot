@@ -154,9 +154,6 @@ async def check_war_updates():
                     elif attack["stars"] == 1:
                         await roast_member(channel, attack["attacker"], brutal=False)
 
-
-
-
 @bot.tree.command(name="topwarstars", description="Show top members by war stars.")
 async def topwarstars(interaction: discord.Interaction, top_n: int = 5):
     """Retrieve top members by cumulative war stars."""
